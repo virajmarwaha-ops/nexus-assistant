@@ -1,0 +1,14 @@
+{
+  "name": "nexus-assistant",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "concurrently -n backend,frontend -c blue,green \"npm:dev:backend\" \"npm:dev:frontend\"",
+    "dev:backend": "venv\\Scripts\\python.exe -m uvicorn app.main:app --reload --port 8000 --app-dir backend",
+    "dev:frontend": "npm run electron:dev --prefix frontend",
+    "setup": "venv\\Scripts\\python.exe -m pip install -r backend/requirements.txt && npm install --prefix frontend"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  }
+}

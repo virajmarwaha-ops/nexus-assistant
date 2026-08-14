@@ -11,10 +11,10 @@ class Settings(BaseSettings):
     # Core
     nexus_env: str = "development"
     nexus_port: int = 8000
-    jwt_secret: str = "change-me"
     nexus_db_path: str = "./nexus_data.db"
 
     # LLM providers
+    groq_api_key: str | None = None
     openai_api_key: str | None = None
     anthropic_api_key: str | None = None
     gemini_api_key: str | None = None

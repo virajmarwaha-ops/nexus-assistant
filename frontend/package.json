@@ -2,37 +2,36 @@
   "name": "nexus-assistant-ui",
   "version": "1.0.0",
   "private": true,
-  "main": "public/electron.js",
+  "main": "electron/main.js",
   "dependencies": {
     "react": "^18.2.0",
-    "react-dom": "^18.2.0",
-    "react-scripts": "5.0.1",
-    "typescript": "^4.9.5"
+    "react-dom": "^18.2.0"
   },
   "scripts": {
-    "start": "react-scripts start",
-    "build": "react-scripts build",
-    "electron:dev": "concurrently \"npm start\" \"electron .\"",
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview",
+    "electron": "electron .",
+    "electron:dev": "concurrently -k \"npm:dev\" \"wait-on tcp:5173 && electron .\"",
     "dist": "npm run build && electron-builder --win"
   },
   "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@types/react": "^18.0.28",
+    "@types/react-dom": "^18.0.11",
+    "@vitejs/plugin-react": "^4.3.0",
     "concurrently": "^8.2.2",
     "electron": "^29.1.0",
     "electron-builder": "^24.13.3",
-    "@types/node": "^16.18.0",
-    "@types/react": "^18.0.28",
-    "@types/react-dom": "^18.0.11"
+    "typescript": "^5.4.0",
+    "vite": "^5.2.0",
+    "wait-on": "^7.2.0"
   },
-  "browserslist": {
-    "production": [
-      ">0.2%",
-      "not dead",
-      "not op_mini all"
-    ],
-    "development": [
-      "last 1 chrome version",
-      "last 1 firefox version",
-      "last 1 safari version"
-    ]
+  "build": {
+    "appId": "com.nexus.assistant",
+    "files": ["dist/**/*", "electron/**/*"],
+    "directories": {
+      "output": "release"
+    }
   }
 }
