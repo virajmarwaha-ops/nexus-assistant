@@ -1,0 +1,13 @@
+services:
+  nexus-backend:
+    build: .
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    volumes:
+      - nexus_data:/app/data
+    restart: unless-stopped
+
+volumes:
+  nexus_data:

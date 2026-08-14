@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.venv/
+*.db
+*.sqlite3
+nexus_memory/
+
+# Node / Electron / Build
+node_modules/
+frontend/build/
+dist/
+dist_electron/
+*.spec
+
+# Environment
+.env
+*.log
+
+# Claude Code local settings
+.claude/settings.local.json
