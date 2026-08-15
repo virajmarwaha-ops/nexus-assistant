@@ -41,14 +41,14 @@ class LLMError(RuntimeError):
 # Groq's Llama models occasionally emit a tool call as raw pseudo-XML text
 # instead of a structured tool_call, which Groq's own API then rejects with
 # a 400 "tool_use_failed" error. The intended call is still recoverable from
-# the error's `failed_generation` field, in one of two shapes seen in
-# practice: `<function=name({...})></function>` or `<function=name={...}>
-# </function>`. Rather than surface that as a hard failure, parse it back
-# into a normal tool call.
-_MALFORMED_TOOL_CALL_PATTERNS = [
-    re.compile(r"<function=([\w.-]+)\((.*)\)></function>", re.DOTALL),
-    re.compile(r"<function=([\w.-]+)=(.*)></function>", re.DOTALL),
-]
+# the error's `failed_generation` field, but the punctuation around it is
+# inconsistent — observed shapes include `<function=name({...})></function>`,
+# `<function=name={...}></function>`, `<function=name{...}></function>`, and
+# `<function=name({...})</function>` (no closing `>`). Rather than try to
+# match every punctuation variant, just find the function name and the first
+# `{...}` JSON blob independently and ignore whatever's between/around them.
+_FUNCTION_NAME_RE = re.compile(r"<function=([\w.-]+)")
+_JSON_OBJECT_RE = re.compile(r"\{.*\}", re.DOTALL)
 
 
 def _recover_malformed_tool_call(exc: Exception) -> dict | None:
@@ -58,20 +58,22 @@ def _recover_malformed_tool_call(exc: Exception) -> dict | None:
         return None
 
     generation = error.get("failed_generation") or str(exc)
-    for pattern in _MALFORMED_TOOL_CALL_PATTERNS:
-        match = pattern.search(generation)
-        if not match:
-            continue
-        name, raw_args = match.group(1), match.group(2)
-        try:
-            arguments = json.loads(raw_args)
-        except json.JSONDecodeError:
-            continue
-        return {
-            "content": None,
-            "tool_calls": [{"id": f"recovered-{uuid.uuid4().hex[:8]}", "name": name, "arguments": arguments}],
-        }
-    return None
+    name_match = _FUNCTION_NAME_RE.search(generation)
+    json_match = _JSON_OBJECT_RE.search(generation)
+    if not name_match or not json_match:
+        return None
+
+    try:
+        arguments = json.loads(json_match.group(0))
+    except json.JSONDecodeError:
+        return None
+
+    return {
+        "content": None,
+        "tool_calls": [
+            {"id": f"recovered-{uuid.uuid4().hex[:8]}", "name": name_match.group(1), "arguments": arguments}
+        ],
+    }
 
 
 # --- OpenAI-compatible providers (Groq, OpenAI, local Ollama/vLLM) ---------
