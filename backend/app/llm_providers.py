@@ -145,7 +145,6 @@ def _chat_openai_compatible(
     api_key: str | None,
     base_url: str | None,
     missing_key_error: str,
-    fallback_model: str | None = None,
 ) -> dict:
     import openai
     from openai import OpenAI
@@ -153,8 +152,8 @@ def _chat_openai_compatible(
     if not api_key:
         raise LLMError(missing_key_error)
 
-    # max_retries=0: the SDK's default backoff can wait 10s+ before even
-    # raising, which just delays our own immediate fallback-model retry below.
+    # max_retries=0: the SDK's default backoff can otherwise wait 10s+
+    # before even raising, delaying the clean error below for no benefit.
     client = OpenAI(api_key=api_key, base_url=base_url, max_retries=0)
     try:
         response = client.chat.completions.create(
@@ -163,29 +162,23 @@ def _chat_openai_compatible(
             tools=_openai_style_tools(tools),
         )
     except openai.RateLimitError as exc:
-        # Free-tier daily quotas are per-model, so a rate-limited primary
-        # model doesn't mean a smaller one on the same account is also out —
-        # silently retry once on the fallback rather than failing the turn.
-        if fallback_model and fallback_model != model:
-            return _chat_openai_compatible(
-                messages,
-                system_prompt,
-                fallback_model,
-                tools,
-                api_key=api_key,
-                base_url=base_url,
-                missing_key_error=missing_key_error,
-            )
-        raise LLMError(f"Model request failed: {exc}") from exc
+        # A silent fallback to a smaller model was tried here and reverted:
+        # tested repeatedly, and even with tools removed and an explicit
+        # "don't guess" instruction, the fallback model still confidently
+        # fabricated a wrong answer (invented a time 5 minutes off from the
+        # real one) rather than admitting it didn't know. A wrong answer
+        # stated with total confidence is worse than an honest rate-limit
+        # message, so this now just fails clearly instead of masking it.
+        raise LLMError(
+            "The AI service has hit its rate limit for today's usage. "
+            "Please wait a few minutes and try again."
+        ) from exc
     except Exception as exc:  # noqa: BLE001 - surface provider hiccups as a clean LLMError, not a 500
         recovered = _recover_malformed_tool_call(exc)
         if recovered is not None:
             return recovered
         raise LLMError(f"Model request failed: {exc}") from exc
     return _from_openai_message(response.choices[0].message)
-
-
-GROQ_FALLBACK_MODEL = "llama-3.1-8b-instant"
 
 
 def _chat_groq(messages: list[NeutralMessage], system_prompt: str, model: str, tools: list[ToolSchema] | None) -> dict:
@@ -197,7 +190,6 @@ def _chat_groq(messages: list[NeutralMessage], system_prompt: str, model: str, t
         api_key=settings.groq_api_key,
         base_url="https://api.groq.com/openai/v1",
         missing_key_error="GROQ_API_KEY is not set",
-        fallback_model=GROQ_FALLBACK_MODEL,
     )
 
 
