@@ -1,9 +1,15 @@
 import React, { useEffect, useRef, useState } from "react";
-import { sendMessage, WS_URL } from "./api";
+import { ChatResponse, confirmAction, sendMessage, WS_URL } from "./api";
 
 interface Message {
   role: "user" | "assistant";
   text: string;
+}
+
+interface PendingConfirmation {
+  confirmationId: string;
+  toolName: string;
+  summary: string;
 }
 
 function useBackendConnection(): boolean {
@@ -44,10 +50,23 @@ export default function App(): JSX.Element {
   const [input, setInput] = useState("");
   const [messages, setMessages] = useState<Message[]>([]);
   const [busy, setBusy] = useState(false);
+  const [pending, setPending] = useState<PendingConfirmation | null>(null);
+
+  function applyResponse(res: ChatResponse) {
+    if (res.type === "confirm") {
+      setPending({
+        confirmationId: res.confirmation_id as string,
+        toolName: res.tool_name as string,
+        summary: res.summary as string,
+      });
+    } else {
+      setMessages((prev) => [...prev, { role: "assistant", text: res.reply || "" }]);
+    }
+  }
 
   async function handleSend(e: React.FormEvent) {
     e.preventDefault();
-    if (!input.trim() || busy) return;
+    if (!input.trim() || busy || pending) return;
 
     const userMessage: Message = { role: "user", text: input };
     setMessages((prev) => [...prev, userMessage]);
@@ -55,13 +74,24 @@ export default function App(): JSX.Element {
     setBusy(true);
 
     try {
-      const reply = await sendMessage(userMessage.text);
-      setMessages((prev) => [...prev, { role: "assistant", text: reply }]);
+      applyResponse(await sendMessage(userMessage.text));
     } catch (err) {
-      setMessages((prev) => [
-        ...prev,
-        { role: "assistant", text: `Error: ${(err as Error).message}` },
-      ]);
+      setMessages((prev) => [...prev, { role: "assistant", text: `Error: ${(err as Error).message}` }]);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleConfirm(approved: boolean) {
+    if (!pending) return;
+    const { confirmationId } = pending;
+    setPending(null);
+    setBusy(true);
+
+    try {
+      applyResponse(await confirmAction(confirmationId, approved));
+    } catch (err) {
+      setMessages((prev) => [...prev, { role: "assistant", text: `Error: ${(err as Error).message}` }]);
     } finally {
       setBusy(false);
     }
@@ -107,6 +137,36 @@ export default function App(): JSX.Element {
         ))}
       </div>
 
+      {pending && (
+        <div
+          style={{
+            border: "2px solid #f08c00",
+            borderRadius: 8,
+            padding: 12,
+            margin: "12px 0",
+            background: "#fff9db",
+          }}
+        >
+          <div style={{ marginBottom: 8 }}>
+            <strong>Confirm ({pending.toolName}):</strong> {pending.summary}
+          </div>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button
+              onClick={() => handleConfirm(true)}
+              style={{ padding: "6px 16px", background: "#12B886", color: "#fff", border: "none", borderRadius: 4 }}
+            >
+              Approve
+            </button>
+            <button
+              onClick={() => handleConfirm(false)}
+              style={{ padding: "6px 16px", background: "#c92a2a", color: "#fff", border: "none", borderRadius: 4 }}
+            >
+              Deny
+            </button>
+          </div>
+        </div>
+      )}
+
       <form onSubmit={handleSend} style={{ display: "flex", gap: 8, marginTop: 12 }}>
         <input
           type="text"
@@ -114,9 +174,9 @@ export default function App(): JSX.Element {
           onChange={(e) => setInput(e.target.value)}
           placeholder="Ask NEXUS to do something..."
           style={{ flex: 1, padding: 8 }}
-          disabled={busy}
+          disabled={busy || !!pending}
         />
-        <button type="submit" disabled={busy}>
+        <button type="submit" disabled={busy || !!pending}>
           {busy ? "..." : "Send"}
         </button>
       </form>

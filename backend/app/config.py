@@ -26,6 +26,7 @@ class Settings(BaseSettings):
     # Tooling
     tesseract_path: str | None = None
     allowed_file_root: str = "."
+    default_country_code: str = "91"
 
 
 settings = Settings()

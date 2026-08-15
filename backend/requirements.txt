@@ -5,6 +5,8 @@ pydantic-settings>=2.2.0
 openai>=1.14.0
 anthropic>=0.19.0
 pyautogui>=0.9.54
+pygetwindow>=0.0.9; platform_system == "Windows"
+pyperclip>=1.8.2
 pytesseract>=0.3.10
 Pillow>=10.2.0
 numpy>=1.26.4

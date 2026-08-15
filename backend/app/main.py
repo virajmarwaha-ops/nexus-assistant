@@ -7,12 +7,13 @@ Run with:
 
 from __future__ import annotations
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-from app.agent import run_agent
+from app.agent import AgentResult, resume_agent, start_agent
 from app.config import settings
+from app.llm_providers import LLMError
 
 app = FastAPI(title="NEXUS Assistant API", version="1.0.0")
 
@@ -29,12 +30,36 @@ app.add_middleware(
 
 class ChatRequest(BaseModel):
     message: str
-    provider: str = "anthropic"
-    model: str = "claude-sonnet-4-6"
+    provider: str = "groq"
+    model: str | None = None
+
+
+class ConfirmRequest(BaseModel):
+    confirmation_id: str
+    approved: bool
 
 
 class ChatResponse(BaseModel):
-    reply: str
+    type: str  # "reply" | "confirm"
+    reply: str | None = None
+    confirmation_id: str | None = None
+    tool_name: str | None = None
+    summary: str | None = None
+    arguments: dict | None = None
+
+
+def _to_response(result: AgentResult) -> ChatResponse:
+    if result.kind == "reply":
+        return ChatResponse(type="reply", reply=result.reply)
+    confirmation = result.confirmation
+    assert confirmation is not None
+    return ChatResponse(
+        type="confirm",
+        confirmation_id=confirmation.confirmation_id,
+        tool_name=confirmation.tool_name,
+        summary=confirmation.summary,
+        arguments=confirmation.arguments,
+    )
 
 
 @app.get("/health")
@@ -56,9 +81,19 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
 
 @app.post("/chat", response_model=ChatResponse)
 def chat_endpoint(payload: ChatRequest) -> ChatResponse:
-    reply = run_agent(
-        user_message=payload.message,
-        provider=payload.provider,
-        model=payload.model,
-    )
-    return ChatResponse(reply=reply)
+    try:
+        result = start_agent(user_message=payload.message, provider=payload.provider, model=payload.model)
+    except LLMError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return _to_response(result)
+
+
+@app.post("/chat/confirm", response_model=ChatResponse)
+def confirm_endpoint(payload: ConfirmRequest) -> ChatResponse:
+    try:
+        result = resume_agent(payload.confirmation_id, payload.approved)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except LLMError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return _to_response(result)
