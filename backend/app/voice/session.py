@@ -23,10 +23,12 @@ from app.voice import stt, tts, wake_word
 logger = logging.getLogger("nexus.voice")
 
 SAMPLE_RATE = 16000
-# A real "hey jarvis" utterance scores 0.98+ per-frame in testing, so there's
-# plenty of headroom above the model's own 0.5 default to raise this and
-# reject noise/other-speech false positives without risking missed triggers.
-WAKE_THRESHOLD = 0.7
+# The false-positive firing was actually caused by echo/barge-in (see the
+# cooldown/grace-period below), not an insufficiently strict threshold —
+# raising this to 0.7 just made genuine "hey jarvis" utterances through a
+# real mic (peaking well under that in practice) harder to detect than the
+# openWakeWord's own 0.5 default. Back to 0.5.
+WAKE_THRESHOLD = 0.5
 
 # After NEXUS finishes speaking, the mic can still pick up the tail of its
 # own voice through the speakers (echo cancellation isn't perfect, and a
