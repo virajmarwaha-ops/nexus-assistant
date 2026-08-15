@@ -12,7 +12,7 @@ export interface ChatResponse {
   arguments?: Record<string, unknown>;
 }
 
-async function postJson(path: string, body: unknown): Promise<ChatResponse> {
+async function postJson<T>(path: string, body: unknown): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -28,9 +28,17 @@ async function postJson(path: string, body: unknown): Promise<ChatResponse> {
 }
 
 export function sendMessage(message: string): Promise<ChatResponse> {
-  return postJson("/chat", { message });
+  return postJson<ChatResponse>("/chat", { message });
 }
 
 export function confirmAction(confirmationId: string, approved: boolean): Promise<ChatResponse> {
-  return postJson("/chat/confirm", { confirmation_id: confirmationId, approved });
+  return postJson<ChatResponse>("/chat/confirm", { confirmation_id: confirmationId, approved });
+}
+
+export interface TTSResponse {
+  audio_base64: string | null;
+}
+
+export function speak(text: string): Promise<TTSResponse> {
+  return postJson<TTSResponse>("/tts", { text });
 }

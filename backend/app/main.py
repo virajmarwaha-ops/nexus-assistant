@@ -7,6 +7,9 @@ Run with:
 
 from __future__ import annotations
 
+import base64
+import json
+
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -14,6 +17,8 @@ from pydantic import BaseModel
 from app.agent import AgentResult, resume_agent, start_agent
 from app.config import settings
 from app.llm_providers import LLMError
+from app.voice import tts
+from app.voice.session import VoiceSession
 
 app = FastAPI(title="NEXUS Assistant API", version="1.0.0")
 
@@ -48,6 +53,14 @@ class ChatResponse(BaseModel):
     arguments: dict | None = None
 
 
+class TTSRequest(BaseModel):
+    text: str
+
+
+class TTSResponse(BaseModel):
+    audio_base64: str | None = None
+
+
 def _to_response(result: AgentResult) -> ChatResponse:
     if result.kind == "reply":
         return ChatResponse(type="reply", reply=result.reply)
@@ -69,12 +82,37 @@ def health() -> dict:
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket) -> None:
-    """Kept open so the frontend can show a live connected/disconnected dot."""
+    """
+    One socket, two jobs: it's the connected/disconnected signal for the
+    orb, and — once the frontend starts streaming mic audio as binary
+    frames — the transport for the whole wake-word/listen/speak voice loop.
+    Text frames carry JSON control messages (e.g. "playback_done").
+    """
     await websocket.accept()
     await websocket.send_json({"type": "connected"})
+
+    session = VoiceSession(send_event=websocket.send_json)
+
     try:
         while True:
-            await websocket.receive_text()
+            message = await websocket.receive()
+            if message["type"] == "websocket.disconnect":
+                break
+
+            audio = message.get("bytes")
+            if audio is not None:
+                await session.feed_audio(audio)
+                continue
+
+            text = message.get("text")
+            if text is None:
+                continue
+            try:
+                payload = json.loads(text)
+            except json.JSONDecodeError:
+                continue
+            if payload.get("type") == "playback_done":
+                await session.notify_playback_done()
     except WebSocketDisconnect:
         pass
 
@@ -97,3 +135,12 @@ def confirm_endpoint(payload: ConfirmRequest) -> ChatResponse:
     except LLMError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return _to_response(result)
+
+
+@app.post("/tts", response_model=TTSResponse)
+async def tts_endpoint(payload: TTSRequest) -> TTSResponse:
+    """Used by the frontend to speak a reply that arrived outside the voice
+    websocket loop (e.g. after resolving a voice-triggered confirm card via
+    the REST /chat/confirm endpoint)."""
+    audio = await tts.synthesize(payload.text)
+    return TTSResponse(audio_base64=base64.b64encode(audio).decode("ascii") if audio else None)
