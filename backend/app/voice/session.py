@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import logging
+import time
 from enum import Enum
 from typing import Awaitable, Callable
 
@@ -26,6 +27,14 @@ SAMPLE_RATE = 16000
 # plenty of headroom above the model's own 0.5 default to raise this and
 # reject noise/other-speech false positives without risking missed triggers.
 WAKE_THRESHOLD = 0.7
+
+# After NEXUS finishes speaking, the mic can still pick up the tail of its
+# own voice through the speakers (echo cancellation isn't perfect, and a
+# synthesized voice apparently scores high enough to look like a genuine
+# wake word to the model) — briefly ignore audio for wake-word purposes
+# right after playback ends so that echo can't re-trigger a new "turn".
+WAKE_COOLDOWN_S = 1.5
+
 SILENCE_RMS_THRESHOLD = 300
 BARGE_IN_RMS_THRESHOLD = SILENCE_RMS_THRESHOLD * 2
 
@@ -60,6 +69,7 @@ class VoiceSession:
         self._diag_frames = 0
         self._diag_max_rms = 0.0
         self._diag_max_score = 0.0
+        self._wake_cooldown_until = 0.0
 
     async def feed_audio(self, pcm_bytes: bytes) -> None:
         chunk = np.frombuffer(pcm_bytes, dtype=np.int16)
@@ -90,12 +100,18 @@ class VoiceSession:
     async def notify_playback_done(self) -> None:
         if self._state == _State.SPEAKING:
             self._state = _State.IDLE
+            self._wake_cooldown_until = time.monotonic() + WAKE_COOLDOWN_S
+            # Discard anything buffered during/right after playback — it may
+            # be an echo tail, not something worth scoring once cooldown ends.
+            self._wake_buffer = np.empty(0, dtype=np.int16)
 
     @staticmethod
     def _rms(chunk: np.ndarray) -> float:
         return float(np.sqrt(np.mean(chunk.astype(np.float64) ** 2)))
 
     async def _feed_wake(self, chunk: np.ndarray) -> None:
+        if time.monotonic() < self._wake_cooldown_until:
+            return
         self._wake_buffer = np.concatenate([self._wake_buffer, chunk])
         while len(self._wake_buffer) >= wake_word.CHUNK_SAMPLES:
             frame = self._wake_buffer[: wake_word.CHUNK_SAMPLES]
