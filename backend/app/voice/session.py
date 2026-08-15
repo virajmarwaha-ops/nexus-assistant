@@ -54,11 +54,27 @@ class VoiceSession:
         self._utterance = bytearray()
         self._utterance_samples = 0
         self._quiet_samples = 0
+        self._diag_frames = 0
+        self._diag_max_rms = 0.0
+        self._diag_max_score = 0.0
 
     async def feed_audio(self, pcm_bytes: bytes) -> None:
         chunk = np.frombuffer(pcm_bytes, dtype=np.int16)
         if len(chunk) == 0:
             return
+
+        self._diag_frames += 1
+        self._diag_max_rms = max(self._diag_max_rms, self._rms(chunk))
+        if self._diag_frames % 40 == 0:
+            logger.info(
+                "audio diag: %d frames, max_rms=%.1f, max_wake_score=%.3f, state=%s",
+                self._diag_frames,
+                self._diag_max_rms,
+                self._diag_max_score,
+                self._state,
+            )
+            self._diag_max_rms = 0.0
+            self._diag_max_score = 0.0
 
         if self._state == _State.IDLE:
             await self._feed_wake(chunk)
@@ -82,6 +98,7 @@ class VoiceSession:
             frame = self._wake_buffer[: wake_word.CHUNK_SAMPLES]
             self._wake_buffer = self._wake_buffer[wake_word.CHUNK_SAMPLES :]
             confidence = await asyncio.to_thread(wake_word.score, frame)
+            self._diag_max_score = max(self._diag_max_score, confidence)
             if confidence >= WAKE_THRESHOLD:
                 await self._start_listening()
                 return
