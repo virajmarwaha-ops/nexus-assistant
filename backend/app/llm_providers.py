@@ -145,25 +145,47 @@ def _chat_openai_compatible(
     api_key: str | None,
     base_url: str | None,
     missing_key_error: str,
+    fallback_model: str | None = None,
 ) -> dict:
+    import openai
     from openai import OpenAI
 
     if not api_key:
         raise LLMError(missing_key_error)
 
-    client = OpenAI(api_key=api_key, base_url=base_url)
+    # max_retries=0: the SDK's default backoff can wait 10s+ before even
+    # raising, which just delays our own immediate fallback-model retry below.
+    client = OpenAI(api_key=api_key, base_url=base_url, max_retries=0)
     try:
         response = client.chat.completions.create(
             model=model,
             messages=_to_openai_messages(system_prompt, messages),
             tools=_openai_style_tools(tools),
         )
+    except openai.RateLimitError as exc:
+        # Free-tier daily quotas are per-model, so a rate-limited primary
+        # model doesn't mean a smaller one on the same account is also out —
+        # silently retry once on the fallback rather than failing the turn.
+        if fallback_model and fallback_model != model:
+            return _chat_openai_compatible(
+                messages,
+                system_prompt,
+                fallback_model,
+                tools,
+                api_key=api_key,
+                base_url=base_url,
+                missing_key_error=missing_key_error,
+            )
+        raise LLMError(f"Model request failed: {exc}") from exc
     except Exception as exc:  # noqa: BLE001 - surface provider hiccups as a clean LLMError, not a 500
         recovered = _recover_malformed_tool_call(exc)
         if recovered is not None:
             return recovered
         raise LLMError(f"Model request failed: {exc}") from exc
     return _from_openai_message(response.choices[0].message)
+
+
+GROQ_FALLBACK_MODEL = "llama-3.1-8b-instant"
 
 
 def _chat_groq(messages: list[NeutralMessage], system_prompt: str, model: str, tools: list[ToolSchema] | None) -> dict:
@@ -175,6 +197,7 @@ def _chat_groq(messages: list[NeutralMessage], system_prompt: str, model: str, t
         api_key=settings.groq_api_key,
         base_url="https://api.groq.com/openai/v1",
         missing_key_error="GROQ_API_KEY is not set",
+        fallback_model=GROQ_FALLBACK_MODEL,
     )
 
 

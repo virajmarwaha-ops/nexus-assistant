@@ -32,7 +32,11 @@ SYSTEM_PROMPT = (
     "text asking the operator for it. Do not call a tool with a guessed, "
     "invented, or placeholder value (real-looking or not, including things "
     "like 'XXXXXXX') under any circumstances — a wrong value sent to a real "
-    "tool has a real-world side effect."
+    "tool has a real-world side effect.\n\n"
+    "Once a tool result shows the request is done, stop calling tools and "
+    "reply to the operator in plain text summarizing what happened. Never "
+    "call the same tool with the same arguments more than once — if a tool "
+    "already succeeded, it doesn't need to run again."
 )
 
 MAX_TURNS = 8
