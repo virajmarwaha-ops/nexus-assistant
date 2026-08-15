@@ -107,11 +107,20 @@ class VoiceSession:
 
     async def notify_playback_done(self) -> None:
         if self._state == _State.SPEAKING:
-            self._state = _State.IDLE
-            self._wake_cooldown_until = time.monotonic() + WAKE_COOLDOWN_S
-            # Discard anything buffered during/right after playback — it may
-            # be an echo tail, not something worth scoring once cooldown ends.
-            self._wake_buffer = np.empty(0, dtype=np.int16)
+            self._return_to_idle_with_cooldown()
+
+    def _return_to_idle_with_cooldown(self) -> None:
+        # Used both after real TTS playback ends and after an error reply
+        # (which never plays audio, so never gets a notify_playback_done
+        # call) — without this on the error path too, a run of consecutive
+        # errors (e.g. a sustained rate limit) re-arms wake detection with
+        # zero cooldown each time, letting the same echo/self-trigger issue
+        # this cooldown exists for turn into a tight, unbroken error loop.
+        self._state = _State.IDLE
+        self._wake_cooldown_until = time.monotonic() + WAKE_COOLDOWN_S
+        # Discard anything buffered during/right after playback — it may
+        # be an echo tail, not something worth scoring once cooldown ends.
+        self._wake_buffer = np.empty(0, dtype=np.int16)
 
     @staticmethod
     def _rms(chunk: np.ndarray) -> float:
@@ -169,13 +178,13 @@ class VoiceSession:
         except Exception as exc:  # noqa: BLE001
             logger.exception("STT failed")
             await self._send({"type": "error", "message": str(exc)})
-            self._state = _State.IDLE
+            self._return_to_idle_with_cooldown()
             return
 
         if not text:
             logger.info("STT returned empty text")
             await self._send({"type": "error", "message": "Didn't catch that — try again."})
-            self._state = _State.IDLE
+            self._return_to_idle_with_cooldown()
             return
 
         logger.info("transcript: %r", text)
@@ -186,7 +195,7 @@ class VoiceSession:
         except Exception as exc:  # noqa: BLE001
             logger.exception("agent call failed")
             await self._send({"type": "error", "message": str(exc)})
-            self._state = _State.IDLE
+            self._return_to_idle_with_cooldown()
             return
 
         await self._emit_agent_result(result)
