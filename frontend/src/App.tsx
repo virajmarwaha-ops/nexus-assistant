@@ -1,5 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { ChatResponse, confirmAction, sendMessage, speak, WS_URL } from "./api";
+import HudOrb, { VoiceState } from "./HudOrb";
+import "./hud.css";
 import { playAudioElement, speakWithBrowserVoice, VoiceClient } from "./voice";
 
 interface Message {
@@ -14,15 +16,6 @@ interface PendingConfirmation {
   source: "text" | "voice";
 }
 
-type VoiceState = "idle" | "listening" | "thinking" | "speaking";
-
-const ORB_COLORS: Record<VoiceState, string> = {
-  idle: "radial-gradient(circle at 35% 30%, #7CFFCB, #12B886)",
-  listening: "radial-gradient(circle at 35% 30%, #7CD4FF, #1C7ED6)",
-  thinking: "radial-gradient(circle at 35% 30%, #D9B8FF, #7048E8)",
-  speaking: "radial-gradient(circle at 35% 30%, #FFD68A, #F08C00)",
-};
-
 export default function App(): JSX.Element {
   const [connected, setConnected] = useState(false);
   const [voiceState, setVoiceState] = useState<VoiceState>("idle");
@@ -33,8 +26,15 @@ export default function App(): JSX.Element {
   const [busy, setBusy] = useState(false);
   const [pending, setPending] = useState<PendingConfirmation | null>(null);
 
+  const [clock, setClock] = useState(() => new Date());
+
   const currentAudioRef = useRef<HTMLAudioElement | null>(null);
   const voiceClientRef = useRef<VoiceClient | null>(null);
+
+  useEffect(() => {
+    const id = setInterval(() => setClock(new Date()), 1000);
+    return () => clearInterval(id);
+  }, []);
 
   async function playReply(text: string, audioBase64: string | null): Promise<void> {
     currentAudioRef.current?.pause();
@@ -195,95 +195,121 @@ export default function App(): JSX.Element {
     }
   }
 
-  const orbBackground = connected ? ORB_COLORS[voiceState] : "radial-gradient(circle at 35% 30%, #999, #444)";
   const statusText = !connected
     ? "Connecting..."
-    : { idle: "Connected — say “Hey Jarvis”", listening: "Listening...", thinking: "Thinking...", speaking: "Speaking..." }[
+    : { idle: "Standing by — say “Hey Jarvis”", listening: "Listening", thinking: "Processing", speaking: "Speaking" }[
         voiceState
       ];
 
   return (
-    <div style={{ maxWidth: 640, margin: "40px auto", fontFamily: "sans-serif" }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 24 }}>
-        <div
-          style={{
-            width: 72,
-            height: 72,
-            borderRadius: "50%",
-            background: orbBackground,
-            boxShadow: connected ? "0 0 24px 4px rgba(0,0,0,0.15)" : "none",
-            transition: "all 0.3s ease",
-          }}
-        />
-        <div>
-          <h2 style={{ margin: 0 }}>NEXUS</h2>
-          <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, color: "#666" }}>
-            <span
-              style={{
-                width: 8,
-                height: 8,
-                borderRadius: "50%",
-                background: connected ? "#12B886" : "#c92a2a",
-                display: "inline-block",
-              }}
-            />
-            {statusText}
+    <div className="hud-root">
+      <div className="hud-corner-frame" />
+
+      <div style={{ display: "flex", justifyContent: "space-between", padding: "24px 32px 0", flexShrink: 0 }}>
+        <div className="hud-panel" style={{ width: 230 }}>
+          <div className="hud-panel-title">Date / Time</div>
+          <div className="hud-clock">{clock.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}</div>
+          <div className="hud-date">
+            {clock.toLocaleDateString([], { weekday: "long", month: "long", day: "numeric" }).toUpperCase()}
           </div>
-          {micError && <div style={{ fontSize: 12, color: "#c92a2a" }}>Mic: {micError}</div>}
+        </div>
+
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 8 }}>
+          <div className="hud-label" style={{ letterSpacing: 4, fontSize: 13, color: "var(--hud-cyan)" }}>
+            NEXUS
+          </div>
+          <div className="hud-panel" style={{ width: 230, textAlign: "right" }}>
+            <div className="hud-panel-title">Status</div>
+            <div style={{ display: "flex", alignItems: "center", gap: 6, justifyContent: "flex-end" }}>
+              <span
+                className={connected ? "hud-pulse" : undefined}
+                style={{
+                  width: 8,
+                  height: 8,
+                  borderRadius: "50%",
+                  background: connected ? "var(--hud-idle)" : "var(--hud-red)",
+                  boxShadow: connected ? "0 0 6px var(--hud-idle)" : "none",
+                  display: "inline-block",
+                }}
+              />
+              {statusText}
+            </div>
+            {micError && <div className="hud-mic-error" style={{ marginTop: 6 }}>Mic: {micError}</div>}
+          </div>
         </div>
       </div>
 
-      <div style={{ border: "1px solid #ddd", borderRadius: 8, padding: 12, minHeight: 320 }}>
-        {messages.map((m, i) => (
-          <div key={i} style={{ margin: "8px 0" }}>
-            <strong>{m.role === "user" ? "You" : "NEXUS"}:</strong> {m.text}
-          </div>
-        ))}
+      <div style={{ display: "flex", justifyContent: "center", flexShrink: 0, margin: "4px 0" }}>
+        <HudOrb connected={connected} voiceState={voiceState} />
       </div>
 
-      {pending && (
+      <div
+        style={{
+          flex: 1,
+          minHeight: 0,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          gap: 28,
+          padding: "0 32px 28px",
+        }}
+      >
+        <div className="hud-deco-ring" aria-hidden="true" />
+
         <div
           style={{
-            border: "2px solid #f08c00",
-            borderRadius: 8,
-            padding: 12,
-            margin: "12px 0",
-            background: "#fff9db",
+            display: "flex",
+            flexDirection: "column",
+            width: 640,
+            maxWidth: "100%",
+            height: "100%",
+            gap: 12,
           }}
         >
-          <div style={{ marginBottom: 8 }}>
-            <strong>Confirm ({pending.toolName}):</strong> {pending.summary}
+          <div className="hud-panel" style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
+            <div className="hud-panel-title">Transcript</div>
+            <div className="hud-messages">
+              {messages.map((m, i) => (
+                <div key={i}>
+                  <span className="hud-message-role">{m.role === "user" ? "YOU" : "NEXUS"}:</span>
+                  {m.text}
+                </div>
+              ))}
+            </div>
           </div>
-          <div style={{ display: "flex", gap: 8 }}>
-            <button
-              onClick={() => handleConfirm(true)}
-              style={{ padding: "6px 16px", background: "#12B886", color: "#fff", border: "none", borderRadius: 4 }}
-            >
-              Approve
-            </button>
-            <button
-              onClick={() => handleConfirm(false)}
-              style={{ padding: "6px 16px", background: "#c92a2a", color: "#fff", border: "none", borderRadius: 4 }}
-            >
-              Deny
-            </button>
-          </div>
-        </div>
-      )}
 
-      <form onSubmit={handleSend} style={{ display: "flex", gap: 8, marginTop: 12 }}>
-        <input
-          type="text"
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          placeholder="Ask NEXUS to do something..."
-          style={{ flex: 1, padding: 8 }}
-          disabled={busy || !!pending}
-        />
-        <button type="submit" disabled={busy || !!pending}>
-          {busy ? "..." : "Send"}
-        </button>
-      </form>
+          {pending && (
+            <div className="hud-panel hud-confirm-panel">
+              <div className="hud-panel-title">Confirm — {pending.toolName}</div>
+              <div style={{ marginBottom: 10 }}>{pending.summary}</div>
+              <div style={{ display: "flex", gap: 8 }}>
+                <button className="hud-button" onClick={() => handleConfirm(true)}>
+                  Approve
+                </button>
+                <button className="hud-button hud-button-danger" onClick={() => handleConfirm(false)}>
+                  Deny
+                </button>
+              </div>
+            </div>
+          )}
+
+          <form onSubmit={handleSend} className="hud-input-row">
+            <input
+              className="hud-input"
+              type="text"
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              placeholder="Ask NEXUS to do something..."
+              disabled={busy || !!pending}
+            />
+            <button className="hud-button" type="submit" disabled={busy || !!pending}>
+              {busy ? "..." : "Send"}
+            </button>
+          </form>
+        </div>
+
+        <div className="hud-deco-ring hud-deco-ring-reverse" aria-hidden="true" />
+      </div>
     </div>
   );
 }

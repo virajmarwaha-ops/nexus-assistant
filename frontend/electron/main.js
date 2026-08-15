@@ -5,8 +5,8 @@ const isDev = !app.isPackaged;
 
 function createWindow() {
   const win = new BrowserWindow({
-    width: 1100,
-    height: 760,
+    width: 1280,
+    height: 820,
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
       contextIsolation: true,
