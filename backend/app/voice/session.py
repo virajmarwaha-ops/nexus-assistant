@@ -35,6 +35,11 @@ WAKE_THRESHOLD = 0.7
 # right after playback ends so that echo can't re-trigger a new "turn".
 WAKE_COOLDOWN_S = 1.5
 
+# A human can't physically react and start talking within a few hundred ms
+# of NEXUS starting to speak, so any barge-in-level volume that early is
+# NEXUS's own voice bleeding into the mic, not a deliberate interruption.
+BARGE_IN_GRACE_S = 1.0
+
 SILENCE_RMS_THRESHOLD = 300
 BARGE_IN_RMS_THRESHOLD = SILENCE_RMS_THRESHOLD * 2
 
@@ -70,6 +75,7 @@ class VoiceSession:
         self._diag_max_rms = 0.0
         self._diag_max_score = 0.0
         self._wake_cooldown_until = 0.0
+        self._speaking_started_at = 0.0
 
     async def feed_audio(self, pcm_bytes: bytes) -> None:
         chunk = np.frombuffer(pcm_bytes, dtype=np.int16)
@@ -119,11 +125,11 @@ class VoiceSession:
             confidence = await asyncio.to_thread(wake_word.score, frame)
             self._diag_max_score = max(self._diag_max_score, confidence)
             if confidence >= WAKE_THRESHOLD:
+                logger.info("wake word detected (score=%.3f), listening", confidence)
                 await self._start_listening()
                 return
 
     async def _start_listening(self) -> None:
-        logger.info("wake word detected, listening")
         self._state = _State.LISTENING
         self._utterance = bytearray()
         self._utterance_samples = 0
@@ -206,6 +212,7 @@ class VoiceSession:
 
     async def speak(self, text: str) -> None:
         self._state = _State.SPEAKING
+        self._speaking_started_at = time.monotonic()
         audio = await tts.synthesize(text)
         logger.info("speaking reply (%s): %r", "tts audio" if audio else "browser fallback", text)
         await self._send(
@@ -217,6 +224,9 @@ class VoiceSession:
         )
 
     async def _feed_barge_in(self, chunk: np.ndarray) -> None:
+        if time.monotonic() - self._speaking_started_at < BARGE_IN_GRACE_S:
+            return
         if self._rms(chunk) > BARGE_IN_RMS_THRESHOLD:
+            logger.info("barge-in detected, listening")
             await self._send({"type": "barge_in"})
             await self._start_listening()

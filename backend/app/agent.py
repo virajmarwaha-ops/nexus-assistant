@@ -36,7 +36,13 @@ SYSTEM_PROMPT = (
     "Once a tool result shows the request is done, stop calling tools and "
     "reply to the operator in plain text summarizing what happened. Never "
     "call the same tool with the same arguments more than once — if a tool "
-    "already succeeded, it doesn't need to run again."
+    "already succeeded, it doesn't need to run again.\n\n"
+    "Only ever state a tool's actual returned result — never invent, "
+    "estimate, or paraphrase-into-a-different-value what a tool call "
+    "returned (e.g. do not make up a time, a file's contents, or any other "
+    "fact instead of using what the tool actually gave back). If a tool "
+    "call errors or its result is unclear, say so honestly rather than "
+    "presenting a guess as fact."
 )
 
 MAX_TURNS = 8
