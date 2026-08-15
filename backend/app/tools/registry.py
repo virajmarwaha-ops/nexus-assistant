@@ -6,6 +6,7 @@ per the safety rules in PLAN.md section 6.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Any, Callable
 
@@ -20,11 +21,26 @@ class ToolSpec:
     handler: Callable[..., Any]
     safety: str  # "safe" | "confirm"
     summarize: Callable[[dict], str] | None = None
+    validate: Callable[[dict], None] | None = None
 
 
 def _whatsapp_summary(args: dict) -> str:
     target = args.get("phone") or args.get("name") or "unknown recipient"
     return f"Send \"{args.get('message', '')}\" to {target}?"
+
+
+def _validate_whatsapp(args: dict) -> None:
+    # Models sometimes fabricate a plausible-looking or placeholder number
+    # ("+9188XXXXXXX", "<user's phone number>") rather than asking for the
+    # real one. Reject anything that isn't just digits (with an optional
+    # leading +) before it ever reaches a confirm card.
+    phone = args.get("phone")
+    if phone and not re.fullmatch(r"\+?\d{7,15}", phone.strip()):
+        raise ValueError(
+            f"'{phone}' is not a real phone number the operator provided — it looks "
+            "guessed or placeholder text. Ask the operator for their actual number "
+            "in plain text; do not call this tool again until they give you one."
+        )
 
 
 def _write_file_summary(args: dict) -> str:
@@ -62,7 +78,11 @@ TOOLS: list[ToolSpec] = [
         description=(
             "Send a WhatsApp message to a contact by phone number or name. "
             "Provide 'phone' (with country code, or a plain 10-digit Indian "
-            "number) or 'name', plus 'message'."
+            "number) or 'name', plus 'message'. Only call this with a phone "
+            "number or name the operator actually typed in this conversation "
+            "— if they said something like 'my own number' without ever "
+            "giving you the digits, do not call this tool; ask them for the "
+            "number in plain text instead."
         ),
         parameters={
             "type": "object",
@@ -76,6 +96,7 @@ TOOLS: list[ToolSpec] = [
         handler=whatsapp.whatsapp_send,
         safety="confirm",
         summarize=_whatsapp_summary,
+        validate=_validate_whatsapp,
     ),
     ToolSpec(
         name="volume_up",

@@ -24,6 +24,8 @@ tool results back as plain chat text instead of proper tool-result blocks
 from __future__ import annotations
 
 import json
+import re
+import uuid
 from typing import Any
 
 from app.config import settings
@@ -34,6 +36,42 @@ ToolSchema = dict[str, Any]
 
 class LLMError(RuntimeError):
     pass
+
+
+# Groq's Llama models occasionally emit a tool call as raw pseudo-XML text
+# instead of a structured tool_call, which Groq's own API then rejects with
+# a 400 "tool_use_failed" error. The intended call is still recoverable from
+# the error's `failed_generation` field, in one of two shapes seen in
+# practice: `<function=name({...})></function>` or `<function=name={...}>
+# </function>`. Rather than surface that as a hard failure, parse it back
+# into a normal tool call.
+_MALFORMED_TOOL_CALL_PATTERNS = [
+    re.compile(r"<function=([\w.-]+)\((.*)\)></function>", re.DOTALL),
+    re.compile(r"<function=([\w.-]+)=(.*)></function>", re.DOTALL),
+]
+
+
+def _recover_malformed_tool_call(exc: Exception) -> dict | None:
+    body = getattr(exc, "body", None)
+    error = body.get("error", {}) if isinstance(body, dict) else {}
+    if error.get("code") != "tool_use_failed":
+        return None
+
+    generation = error.get("failed_generation") or str(exc)
+    for pattern in _MALFORMED_TOOL_CALL_PATTERNS:
+        match = pattern.search(generation)
+        if not match:
+            continue
+        name, raw_args = match.group(1), match.group(2)
+        try:
+            arguments = json.loads(raw_args)
+        except json.JSONDecodeError:
+            continue
+        return {
+            "content": None,
+            "tool_calls": [{"id": f"recovered-{uuid.uuid4().hex[:8]}", "name": name, "arguments": arguments}],
+        }
+    return None
 
 
 # --- OpenAI-compatible providers (Groq, OpenAI, local Ollama/vLLM) ---------
@@ -114,6 +152,9 @@ def _chat_openai_compatible(
             tools=_openai_style_tools(tools),
         )
     except Exception as exc:  # noqa: BLE001 - surface provider hiccups as a clean LLMError, not a 500
+        recovered = _recover_malformed_tool_call(exc)
+        if recovered is not None:
+            return recovered
         raise LLMError(f"Model request failed: {exc}") from exc
     return _from_openai_message(response.choices[0].message)
 

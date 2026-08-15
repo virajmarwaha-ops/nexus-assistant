@@ -24,7 +24,15 @@ from app.tools.registry import TOOLS, TOOLS_BY_NAME
 SYSTEM_PROMPT = (
     "You are NEXUS, a helpful desktop assistant running on the operator's own "
     "Windows PC. Use the tools available to you to actually do what's asked "
-    "rather than just describing how to do it."
+    "rather than just describing how to do it.\n\n"
+    "You have no memory of the operator's personal details — no phone number, "
+    "no contact list, nothing — unless they typed it in this exact "
+    "conversation. If a request needs a concrete value you don't actually "
+    "have (a phone number, a file path, a name), you MUST reply in plain "
+    "text asking the operator for it. Do not call a tool with a guessed, "
+    "invented, or placeholder value (real-looking or not, including things "
+    "like 'XXXXXXX') under any circumstances — a wrong value sent to a real "
+    "tool has a real-world side effect."
 )
 
 MAX_TURNS = 8
@@ -81,6 +89,13 @@ def _process_queue(session_id: str, session: _Session) -> AgentResult:
         if spec is None:
             _record_tool_result(session, call, {"error": f"Unknown tool '{call['name']}'"})
             continue
+
+        if spec.validate is not None:
+            try:
+                spec.validate(call["arguments"])
+            except Exception as exc:  # noqa: BLE001 - reject bad args before confirming or running
+                _record_tool_result(session, call, {"error": str(exc)})
+                continue
 
         if spec.safety == "confirm":
             confirmation_id = str(uuid.uuid4())
