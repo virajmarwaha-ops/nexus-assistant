@@ -22,7 +22,10 @@ from app.voice import stt, tts, wake_word
 logger = logging.getLogger("nexus.voice")
 
 SAMPLE_RATE = 16000
-WAKE_THRESHOLD = 0.5
+# A real "hey jarvis" utterance scores 0.98+ per-frame in testing, so there's
+# plenty of headroom above the model's own 0.5 default to raise this and
+# reject noise/other-speech false positives without risking missed triggers.
+WAKE_THRESHOLD = 0.7
 SILENCE_RMS_THRESHOLD = 300
 BARGE_IN_RMS_THRESHOLD = SILENCE_RMS_THRESHOLD * 2
 
