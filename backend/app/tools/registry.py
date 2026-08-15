@@ -10,7 +10,7 @@ import re
 from dataclasses import dataclass
 from typing import Any, Callable
 
-from app.tools import apps, browser, files, screen, system_control, whatsapp
+from app.tools import apps, browser, datetime_tool, files, screen, system_control, whatsapp
 
 
 @dataclass(frozen=True)
@@ -71,6 +71,13 @@ TOOLS: list[ToolSpec] = [
         description="List every installed application NEXUS can open.",
         parameters={"type": "object", "properties": {}},
         handler=apps.list_apps,
+        safety="safe",
+    ),
+    ToolSpec(
+        name="get_current_time",
+        description="Get the current date and time on the operator's PC.",
+        parameters={"type": "object", "properties": {}},
+        handler=datetime_tool.get_current_time,
         safety="safe",
     ),
     ToolSpec(

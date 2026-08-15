@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import base64
 import json
+import logging
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
@@ -19,6 +20,8 @@ from app.config import settings
 from app.llm_providers import LLMError
 from app.voice import tts
 from app.voice.session import VoiceSession
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
 
 app = FastAPI(title="NEXUS Assistant API", version="1.0.0")
 

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import logging
 from enum import Enum
 from typing import Awaitable, Callable
 
@@ -17,6 +18,8 @@ import numpy as np
 
 from app.agent import AgentResult, start_agent
 from app.voice import stt, tts, wake_word
+
+logger = logging.getLogger("nexus.voice")
 
 SAMPLE_RATE = 16000
 WAKE_THRESHOLD = 0.5
@@ -84,6 +87,7 @@ class VoiceSession:
                 return
 
     async def _start_listening(self) -> None:
+        logger.info("wake word detected, listening")
         self._state = _State.LISTENING
         self._utterance = bytearray()
         self._utterance_samples = 0
@@ -107,6 +111,8 @@ class VoiceSession:
             await self._finish_utterance()
 
     async def _finish_utterance(self) -> None:
+        duration_s = self._utterance_samples / SAMPLE_RATE
+        logger.info("utterance finished: %.2fs of audio, transcribing", duration_s)
         self._state = _State.PROCESSING
         pcm_bytes = bytes(self._utterance)
         self._utterance = bytearray()
@@ -117,20 +123,24 @@ class VoiceSession:
         try:
             text = await asyncio.to_thread(stt.transcribe, pcm_bytes, SAMPLE_RATE)
         except Exception as exc:  # noqa: BLE001
+            logger.exception("STT failed")
             await self._send({"type": "error", "message": str(exc)})
             self._state = _State.IDLE
             return
 
         if not text:
+            logger.info("STT returned empty text")
             await self._send({"type": "error", "message": "Didn't catch that — try again."})
             self._state = _State.IDLE
             return
 
+        logger.info("transcript: %r", text)
         await self._send({"type": "transcript", "text": text})
 
         try:
             result = await asyncio.to_thread(start_agent, text, self._provider, self._model)
         except Exception as exc:  # noqa: BLE001
+            logger.exception("agent call failed")
             await self._send({"type": "error", "message": str(exc)})
             self._state = _State.IDLE
             return
@@ -141,6 +151,7 @@ class VoiceSession:
         if result.kind == "confirm":
             confirmation = result.confirmation
             assert confirmation is not None
+            logger.info("agent wants confirmation: %s", confirmation.summary)
             await self._send(
                 {
                     "type": "confirm",
@@ -160,6 +171,7 @@ class VoiceSession:
     async def speak(self, text: str) -> None:
         self._state = _State.SPEAKING
         audio = await tts.synthesize(text)
+        logger.info("speaking reply (%s): %r", "tts audio" if audio else "browser fallback", text)
         await self._send(
             {
                 "type": "reply",
