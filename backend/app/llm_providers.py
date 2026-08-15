@@ -52,12 +52,17 @@ _JSON_OBJECT_RE = re.compile(r"\{.*\}", re.DOTALL)
 
 
 def _recover_malformed_tool_call(exc: Exception) -> dict | None:
+    # openai-python's error body shape isn't worth pinning down exactly (it's
+    # shifted before), so just prefer the parsed failed_generation field when
+    # we can find it and otherwise fall back to the exception's own text —
+    # the regexes below are specific enough not to false-positive on
+    # unrelated errors.
     body = getattr(exc, "body", None)
-    error = body.get("error", {}) if isinstance(body, dict) else {}
-    if error.get("code") != "tool_use_failed":
-        return None
+    generation = None
+    if isinstance(body, dict):
+        generation = body.get("failed_generation") or body.get("error", {}).get("failed_generation")
+    generation = generation or str(exc)
 
-    generation = error.get("failed_generation") or str(exc)
     name_match = _FUNCTION_NAME_RE.search(generation)
     json_match = _JSON_OBJECT_RE.search(generation)
     if not name_match or not json_match:
