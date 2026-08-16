@@ -31,6 +31,10 @@ def transcribe(pcm_bytes: bytes, sample_rate: int = 16000) -> str:
         response = client.audio.transcriptions.create(
             file=("utterance.wav", buffer.getvalue(), "audio/wav"),
             model="whisper-large-v3-turbo",
+            # Without a language hint, Whisper sometimes hallucinates text in
+            # an unrelated language on quiet/unclear audio (seen: transcribed
+            # near-silence as Russian) — pin it to English.
+            language="en",
         )
     except Exception as exc:  # noqa: BLE001 - surface as a clean LLMError, not a 500
         raise LLMError(f"Transcription failed: {exc}") from exc

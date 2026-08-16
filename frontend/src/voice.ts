@@ -100,6 +100,7 @@ export function speakWithBrowserVoice(text: string): Promise<void> {
       return;
     }
     const utterance = new SpeechSynthesisUtterance(text);
+    utterance.lang = "en-US";
     utterance.onend = () => resolve();
     utterance.onerror = () => resolve();
     window.speechSynthesis.speak(utterance);

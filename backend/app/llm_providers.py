@@ -43,10 +43,12 @@ class LLMError(RuntimeError):
 # a 400 "tool_use_failed" error. The intended call is still recoverable from
 # the error's `failed_generation` field, but the punctuation around it is
 # inconsistent — observed shapes include `<function=name({...})></function>`,
-# `<function=name={...}></function>`, `<function=name{...}></function>`, and
-# `<function=name({...})</function>` (no closing `>`). Rather than try to
-# match every punctuation variant, just find the function name and the first
-# `{...}` JSON blob independently and ignore whatever's between/around them.
+# `<function=name={...}></function>`, `<function=name{...}></function>`,
+# `<function=name({...})</function>` (no closing `>`), and `<function=name/>`
+# (self-closing, no args at all — for zero-parameter tools). Rather than try
+# to match every punctuation variant, just find the function name and the
+# first `{...}` JSON blob (if any) independently, and treat a missing JSON
+# blob as empty arguments rather than giving up.
 _FUNCTION_NAME_RE = re.compile(r"<function=([\w.-]+)")
 _JSON_OBJECT_RE = re.compile(r"\{.*\}", re.DOTALL)
 
@@ -64,14 +66,17 @@ def _recover_malformed_tool_call(exc: Exception) -> dict | None:
     generation = generation or str(exc)
 
     name_match = _FUNCTION_NAME_RE.search(generation)
-    json_match = _JSON_OBJECT_RE.search(generation)
-    if not name_match or not json_match:
+    if not name_match:
         return None
 
-    try:
-        arguments = json.loads(json_match.group(0))
-    except json.JSONDecodeError:
-        return None
+    json_match = _JSON_OBJECT_RE.search(generation)
+    if json_match is None:
+        arguments = {}
+    else:
+        try:
+            arguments = json.loads(json_match.group(0))
+        except json.JSONDecodeError:
+            return None
 
     return {
         "content": None,
