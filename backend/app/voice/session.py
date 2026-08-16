@@ -34,8 +34,16 @@ WAKE_THRESHOLD = 0.5
 # own voice through the speakers (echo cancellation isn't perfect, and a
 # synthesized voice apparently scores high enough to look like a genuine
 # wake word to the model) — briefly ignore audio for wake-word purposes
-# right after playback ends so that echo can't re-trigger a new "turn".
-WAKE_COOLDOWN_S = 1.5
+# right after playback ends so that echo can't re-trigger a new "turn". 1.5s
+# wasn't enough margin in a real (presumably echo-prone) room; widened to 3s.
+WAKE_COOLDOWN_S = 3.0
+
+# Whisper is well known to hallucinate short filler phrases ("thank you",
+# "thanks for watching") when given near-silent/unclear audio rather than
+# returning nothing — so a captured "utterance" that's mostly silence (e.g.
+# a wake trigger off echo, capturing little to no real speech after it)
+# should just be dropped before it ever reaches STT, not transcribed.
+MIN_UTTERANCE_RMS = 150
 
 # A human can't physically react and start talking within a few hundred ms
 # of NEXUS starting to speak, so any barge-in-level volume that early is
@@ -165,12 +173,22 @@ class VoiceSession:
 
     async def _finish_utterance(self) -> None:
         duration_s = self._utterance_samples / SAMPLE_RATE
-        logger.info("utterance finished: %.2fs of audio, transcribing", duration_s)
-        self._state = _State.PROCESSING
         pcm_bytes = bytes(self._utterance)
         self._utterance = bytearray()
         self._wake_buffer = np.empty(0, dtype=np.int16)
 
+        utterance_rms = self._rms(np.frombuffer(pcm_bytes, dtype=np.int16))
+        if utterance_rms < MIN_UTTERANCE_RMS:
+            logger.info(
+                "utterance too quiet to bother transcribing (%.2fs, rms=%.1f) — dropping, likely an echo/noise trigger",
+                duration_s,
+                utterance_rms,
+            )
+            self._return_to_idle_with_cooldown()
+            return
+
+        logger.info("utterance finished: %.2fs of audio, rms=%.1f, transcribing", duration_s, utterance_rms)
+        self._state = _State.PROCESSING
         await self._send({"type": "thinking"})
 
         try:
