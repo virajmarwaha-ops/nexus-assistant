@@ -61,6 +61,16 @@ SILENCE_DURATION_SAMPLES = int(0.9 * SAMPLE_RATE)
 MAX_UTTERANCE_SAMPLES = int(12.0 * SAMPLE_RATE)
 MIN_UTTERANCE_SAMPLES = int(0.3 * SAMPLE_RATE)
 
+# openWakeWord's embedding model needs a real window of trailing audio to
+# build enough confidence to fire, so by the time a wake trigger actually
+# registers, the operator has very plausibly already started saying the
+# command in the same breath as "hey jarvis" — starting the recording
+# buffer completely empty at that moment clips exactly that. Keep a rolling
+# pre-roll of recent audio and seed the utterance with it on a genuine wake
+# trigger (not on barge-in, where the pre-roll would just be NEXUS's own
+# tail-end speech rather than anything the operator said).
+PREROLL_SAMPLES = int(1.5 * SAMPLE_RATE)
+
 SendEvent = Callable[[dict], Awaitable[None]]
 
 
@@ -86,6 +96,7 @@ class VoiceSession:
         self._diag_max_score = 0.0
         self._wake_cooldown_until = 0.0
         self._speaking_started_at = 0.0
+        self._preroll = np.empty(0, dtype=np.int16)
 
     async def feed_audio(self, pcm_bytes: bytes) -> None:
         chunk = np.frombuffer(pcm_bytes, dtype=np.int16)
@@ -106,6 +117,7 @@ class VoiceSession:
             self._diag_max_score = 0.0
 
         if self._state == _State.IDLE:
+            self._preroll = np.concatenate([self._preroll, chunk])[-PREROLL_SAMPLES:]
             await self._feed_wake(chunk)
         elif self._state == _State.LISTENING:
             await self._feed_listening(chunk)
@@ -145,13 +157,19 @@ class VoiceSession:
             self._diag_max_score = max(self._diag_max_score, confidence)
             if confidence >= WAKE_THRESHOLD:
                 logger.info("wake word detected (score=%.3f), listening", confidence)
-                await self._start_listening()
+                preroll = self._preroll
+                self._preroll = np.empty(0, dtype=np.int16)
+                await self._start_listening(preroll)
                 return
 
-    async def _start_listening(self) -> None:
+    async def _start_listening(self, preroll: np.ndarray | None = None) -> None:
         self._state = _State.LISTENING
-        self._utterance = bytearray()
-        self._utterance_samples = 0
+        if preroll is not None and len(preroll):
+            self._utterance = bytearray(preroll.tobytes())
+            self._utterance_samples = len(preroll)
+        else:
+            self._utterance = bytearray()
+            self._utterance_samples = 0
         self._quiet_samples = 0
         await self._send({"type": "wake"})
 
