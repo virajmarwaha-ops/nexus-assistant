@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
-import { ChatResponse, confirmAction, sendMessage, speak, WS_URL } from "./api";
+import { ChatResponse, ChecklistItem, confirmAction, getChecklist, sendMessage, speak, WS_URL } from "./api";
+import ChecklistScreen from "./ChecklistScreen";
 import HudOrb, { VoiceState } from "./HudOrb";
 import "./hud.css";
 import { playAudioElement, speakWithBrowserVoice, VoiceClient } from "./voice";
@@ -28,8 +29,24 @@ export default function App(): JSX.Element {
 
   const [clock, setClock] = useState(() => new Date());
 
+  const [checklist, setChecklist] = useState<ChecklistItem[] | null>(null);
+  const [checklistChecking, setChecklistChecking] = useState(true);
+  const [checklistDismissed, setChecklistDismissed] = useState(false);
+
   const currentAudioRef = useRef<HTMLAudioElement | null>(null);
   const voiceClientRef = useRef<VoiceClient | null>(null);
+
+  const runChecklist = React.useCallback(() => {
+    setChecklistChecking(true);
+    getChecklist()
+      .then(setChecklist)
+      .catch(() => setChecklist(null)) // backend unreachable — nothing useful to show yet, let the connection indicator handle it
+      .finally(() => setChecklistChecking(false));
+  }, []);
+
+  useEffect(() => {
+    runChecklist();
+  }, [runChecklist]);
 
   useEffect(() => {
     const id = setInterval(() => setClock(new Date()), 1000);
@@ -208,6 +225,17 @@ export default function App(): JSX.Element {
     : { idle: "Standing by — say “Hey Jarvis”", listening: "Listening", thinking: "Processing", speaking: "Speaking" }[
         voiceState
       ];
+
+  if (checklist && !checklist.every((item) => item.ok) && !checklistDismissed) {
+    return (
+      <ChecklistScreen
+        items={checklist}
+        checking={checklistChecking}
+        onRecheck={runChecklist}
+        onContinueAnyway={() => setChecklistDismissed(true)}
+      />
+    );
+  }
 
   return (
     <div className="hud-root">

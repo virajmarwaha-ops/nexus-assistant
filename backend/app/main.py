@@ -16,6 +16,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from app.agent import AgentResult, resume_agent, start_agent
+from app.checklist import run_checklist
 from app.config import settings
 from app.llm_providers import LLMError
 from app.voice import tts
@@ -64,6 +65,13 @@ class TTSResponse(BaseModel):
     audio_base64: str | None = None
 
 
+class ChecklistItem(BaseModel):
+    id: str
+    label: str
+    ok: bool
+    hint: str
+
+
 def _to_response(result: AgentResult) -> ChatResponse:
     if result.kind == "reply":
         return ChatResponse(type="reply", reply=result.reply)
@@ -81,6 +89,11 @@ def _to_response(result: AgentResult) -> ChatResponse:
 @app.get("/health")
 def health() -> dict:
     return {"status": "ok", "env": settings.nexus_env}
+
+
+@app.get("/system/checklist", response_model=list[ChecklistItem])
+def checklist_endpoint() -> list[dict]:
+    return run_checklist()
 
 
 @app.websocket("/ws")

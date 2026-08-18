@@ -42,3 +42,16 @@ export interface TTSResponse {
 export function speak(text: string): Promise<TTSResponse> {
   return postJson<TTSResponse>("/tts", { text });
 }
+
+export interface ChecklistItem {
+  id: string;
+  label: string;
+  ok: boolean;
+  hint: string;
+}
+
+export async function getChecklist(): Promise<ChecklistItem[]> {
+  const res = await fetch(`${API_BASE}/system/checklist`);
+  if (!res.ok) throw new Error(`Checklist request failed: ${res.status}`);
+  return res.json();
+}
