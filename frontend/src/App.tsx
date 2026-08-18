@@ -36,6 +36,10 @@ export default function App(): JSX.Element {
     return () => clearInterval(id);
   }, []);
 
+  useEffect(() => {
+    window.nexus?.reportVoiceState?.(voiceState);
+  }, [voiceState]);
+
   async function playReply(text: string, audioBase64: string | null): Promise<void> {
     currentAudioRef.current?.pause();
     currentAudioRef.current = null;
@@ -205,7 +209,10 @@ export default function App(): JSX.Element {
     <div className="hud-root">
       <div className="hud-corner-frame" />
 
-      <div style={{ display: "flex", justifyContent: "space-between", padding: "24px 32px 0", flexShrink: 0 }}>
+      <div
+        className="hud-drag-region"
+        style={{ display: "flex", justifyContent: "space-between", padding: "24px 32px 0", flexShrink: 0 }}
+      >
         <div className="hud-panel" style={{ width: 230 }}>
           <div className="hud-panel-title">Date / Time</div>
           <div className="hud-clock">{clock.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}</div>

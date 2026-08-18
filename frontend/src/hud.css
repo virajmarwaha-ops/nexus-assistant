@@ -25,6 +25,18 @@ body,
   margin: 0;
 }
 
+/* Frameless window has no native title bar, so this region stands in as
+   the drag handle for moving the window; interactive children opt back out. */
+.hud-drag-region {
+  -webkit-app-region: drag;
+}
+
+.hud-drag-region button,
+.hud-drag-region input,
+.hud-drag-region a {
+  -webkit-app-region: no-drag;
+}
+
 .hud-root {
   position: relative;
   height: 100vh;
