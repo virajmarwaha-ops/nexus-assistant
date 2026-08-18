@@ -297,7 +297,11 @@ PROVIDERS = {
 }
 
 DEFAULT_MODELS = {
-    "groq": "llama-3.3-70b-versatile",
+    # llama-3.3-70b-versatile was retired by Groq (no longer in
+    # /v1/models for this account, requests 404 with model_not_found) —
+    # gpt-oss-120b is the closest replacement still confirmed to support
+    # tool calling in this app's format.
+    "groq": "openai/gpt-oss-120b",
     "openai": "gpt-4o-mini",
     "anthropic": "claude-sonnet-4-6",
     "local": "llama3.2",
