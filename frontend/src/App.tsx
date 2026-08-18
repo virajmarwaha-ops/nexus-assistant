@@ -122,7 +122,11 @@ export default function App(): JSX.Element {
               summary: payload.summary as string,
               source: "voice",
             });
-            setVoiceState("idle");
+            break;
+          case "confirm_resolved":
+            // The pending confirmation was just answered by voice — drop the
+            // on-screen card so a stale Approve/Deny click can't double-resolve it.
+            setPending((prev) => (prev?.confirmationId === payload.confirmation_id ? null : prev));
             break;
           case "error":
             setMessages((prev) => [...prev, { role: "assistant", text: `Error: ${payload.message}` }]);

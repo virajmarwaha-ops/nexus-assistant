@@ -17,7 +17,7 @@ from typing import Awaitable, Callable
 
 import numpy as np
 
-from app.agent import AgentResult, start_agent
+from app.agent import AgentResult, PendingConfirmation, resume_agent, start_agent
 from app.voice import stt, tts, wake_word
 
 logger = logging.getLogger("nexus.voice")
@@ -71,6 +71,15 @@ MIN_UTTERANCE_SAMPLES = int(0.3 * SAMPLE_RATE)
 # tail-end speech rather than anything the operator said).
 PREROLL_SAMPLES = int(1.5 * SAMPLE_RATE)
 
+# Confirm-gated tools (anything with a real-world side effect) get spoken
+# aloud and can be answered by voice, not just the on-screen Approve/Deny
+# buttons — otherwise a hands-free user has no way to know one is pending.
+# Matched by substring against the lowercased transcript rather than an
+# exact match, since STT output varies ("Yes.", "yeah go ahead").
+_CONFIRM_YES_WORDS = ("yes", "yeah", "yep", "yup", "confirm", "approve", "go ahead", "do it", "sure", "affirmative")
+_CONFIRM_NO_WORDS = ("no", "nope", "nah", "cancel", "deny", "don't", "stop", "negative")
+MAX_CONFIRMATION_ATTEMPTS = 2
+
 SendEvent = Callable[[dict], Awaitable[None]]
 
 
@@ -97,6 +106,8 @@ class VoiceSession:
         self._wake_cooldown_until = 0.0
         self._speaking_started_at = 0.0
         self._preroll = np.empty(0, dtype=np.int16)
+        self._pending_confirmation: PendingConfirmation | None = None
+        self._confirmation_attempts = 0
 
     async def feed_audio(self, pcm_bytes: bytes) -> None:
         chunk = np.frombuffer(pcm_bytes, dtype=np.int16)
@@ -126,7 +137,13 @@ class VoiceSession:
         # PROCESSING: drop audio, we're between turns
 
     async def notify_playback_done(self) -> None:
-        if self._state == _State.SPEAKING:
+        if self._state != _State.SPEAKING:
+            return
+        if self._pending_confirmation is not None:
+            # Go straight into listening for the yes/no answer — no wake
+            # word needed, this is a direct follow-up to what was just asked.
+            await self._start_listening()
+        else:
             self._return_to_idle_with_cooldown()
 
     def _return_to_idle_with_cooldown(self) -> None:
@@ -202,7 +219,10 @@ class VoiceSession:
                 duration_s,
                 utterance_rms,
             )
-            self._return_to_idle_with_cooldown()
+            if self._pending_confirmation is not None:
+                await self._retry_or_abandon_confirmation()
+            else:
+                self._return_to_idle_with_cooldown()
             return
 
         logger.info("utterance finished: %.2fs of audio, rms=%.1f, transcribing", duration_s, utterance_rms)
@@ -214,17 +234,27 @@ class VoiceSession:
         except Exception as exc:  # noqa: BLE001
             logger.exception("STT failed")
             await self._send({"type": "error", "message": str(exc)})
-            self._return_to_idle_with_cooldown()
+            if self._pending_confirmation is not None:
+                await self._retry_or_abandon_confirmation()
+            else:
+                self._return_to_idle_with_cooldown()
             return
 
         if not text:
             logger.info("STT returned empty text")
             await self._send({"type": "error", "message": "Didn't catch that — try again."})
-            self._return_to_idle_with_cooldown()
+            if self._pending_confirmation is not None:
+                await self._retry_or_abandon_confirmation()
+            else:
+                self._return_to_idle_with_cooldown()
             return
 
         logger.info("transcript: %r", text)
         await self._send({"type": "transcript", "text": text})
+
+        if self._pending_confirmation is not None:
+            await self._resolve_confirmation_from_speech(text)
+            return
 
         try:
             result = await asyncio.to_thread(start_agent, text, self._provider, self._model)
@@ -236,11 +266,57 @@ class VoiceSession:
 
         await self._emit_agent_result(result)
 
+    async def _retry_or_abandon_confirmation(self) -> None:
+        """Couldn't get a usable answer for a pending voice confirmation."""
+        self._confirmation_attempts += 1
+        if self._confirmation_attempts >= MAX_CONFIRMATION_ATTEMPTS:
+            logger.info("giving up on voice confirmation after %d attempts — left on screen", self._confirmation_attempts)
+            self._pending_confirmation = None
+            self._confirmation_attempts = 0
+            self._return_to_idle_with_cooldown()
+            return
+        await self.speak("Sorry, I didn't catch that. Yes or no?")
+
+    async def _resolve_confirmation_from_speech(self, text: str) -> None:
+        confirmation = self._pending_confirmation
+        assert confirmation is not None
+        normalized = text.strip().lower().rstrip(".!?")
+
+        approved = any(word in normalized for word in _CONFIRM_YES_WORDS)
+        denied = any(word in normalized for word in _CONFIRM_NO_WORDS)
+
+        if approved == denied:  # neither matched, or (unlikely) both did — ambiguous either way
+            logger.info("confirmation response %r wasn't a clear yes/no, re-prompting", text)
+            await self._retry_or_abandon_confirmation()
+            return
+
+        self._pending_confirmation = None
+        self._confirmation_attempts = 0
+
+        try:
+            result = await asyncio.to_thread(resume_agent, confirmation.confirmation_id, approved)
+        except KeyError:
+            # Resolved already via the on-screen Approve/Deny buttons before
+            # the spoken answer came in — nothing left to do.
+            logger.info("confirmation %s already resolved elsewhere", confirmation.confirmation_id)
+            self._return_to_idle_with_cooldown()
+            return
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("resume_agent failed")
+            await self._send({"type": "error", "message": str(exc)})
+            self._return_to_idle_with_cooldown()
+            return
+
+        await self._send({"type": "confirm_resolved", "confirmation_id": confirmation.confirmation_id})
+        await self._emit_agent_result(result)
+
     async def _emit_agent_result(self, result: AgentResult) -> None:
         if result.kind == "confirm":
             confirmation = result.confirmation
             assert confirmation is not None
             logger.info("agent wants confirmation: %s", confirmation.summary)
+            self._pending_confirmation = confirmation
+            self._confirmation_attempts = 0
             await self._send(
                 {
                     "type": "confirm",
@@ -250,9 +326,10 @@ class VoiceSession:
                     "arguments": confirmation.arguments,
                 }
             )
-            # The confirm card is resolved over the existing REST endpoint; go
-            # back to listening for the wake word rather than blocking here.
-            self._state = _State.IDLE
+            # Speak it too — a hands-free user has no other way to know one's
+            # pending. notify_playback_done() routes back into listening for
+            # the yes/no once this finishes, since _pending_confirmation is set.
+            await self.speak(f"{confirmation.summary} Say yes to confirm, or no to cancel.")
             return
 
         await self.speak(result.reply or "")
