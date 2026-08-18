@@ -6,19 +6,9 @@ and OS automation.
 
 ## Quickstart
 
-1. Run the backend:
+See [SETUP.md](SETUP.md) for a full walkthrough from a fresh clone (dependencies, API keys,
+Tesseract, and how to tell it's actually working). Once set up, one command runs everything:
 
-   ```bash
-   python -m venv venv
-   source venv/bin/activate  # Or venv\Scripts\activate on Windows
-   pip install -r backend/requirements.txt
-   uvicorn backend.app.main:app --reload --port 8000
-   ```
-
-2. Run the frontend:
-
-   ```bash
-   cd frontend
-   npm install
-   npm start
-   ```
+```bash
+npm run dev
+```
